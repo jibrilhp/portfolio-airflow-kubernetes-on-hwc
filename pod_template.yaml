@@ -1,0 +1,62 @@
+apiVersion: v1
+kind: Pod
+spec:
+  restartPolicy: Never 
+  securityContext: 
+    runAsUser: 50000
+    runAsGroup: 0
+    fsGroup: 50000
+  volumes:
+    - name: google-application-credentials
+      secret:
+        secretName: airflow-service-account
+        defaultMode: 292
+    - name: smbdir
+      persistentVolumeClaim:
+        claimName: smb-pvc
+    - name: sshkeys
+      secret:
+        secretName: airflow-ssh-credentials
+        defaultMode: 256
+  containers:
+    - name: worker
+      image: apache/airflow:2.10.4-python3.10
+      volumeMounts:
+        - name: google-application-credentials
+          mountPath: "/secrets/sa"
+          readOnly: true
+        - name: smbdir
+          mountPath: /home/airflow/smb
+        - name: sshkeys
+          mountPath: /home/airflow/.ssh
+          readOnly: true
+      env:
+        - name: MY_NAMESPACE
+          valueFrom:
+            fieldRef: {fieldPath: metadata.namespace}
+        - name: AIRFLOW__CORE__FERNET_KEY
+          valueFrom:
+            secretKeyRef: {name: airflow-secrets, key: fernet_key}
+        - name: POSTGRESQL_PASSWORD
+          valueFrom:
+            secretKeyRef: {name: airflow-secrets, key: dbpassword}
+        - name: AIRFLOW__CELERY__BROKER_URL
+          value: redis://redis.$(MY_NAMESPACE).svc.cluster.local:6379/0
+        - name: AIRFLOW__DATABASE__SQL_ALCHEMY_CONN
+          value: "postgresql+psycopg2://$(POSTGRESQL_USERNAME):$(POSTGRESQL_PASSWORD)@database.$(MY_NAMESPACE).svc.cluster.local:6432/$(POSTGRESQL_DATABASE)"
+        - name: AIRFLOW__CELERY__RESULT_BACKEND
+          value: "db+postgresql+psycopg2://$(POSTGRESQL_USERNAME):$(POSTGRESQL_PASSWORD)@database.$(MY_NAMESPACE).svc.cluster.local:6432/$(POSTGRESQL_DATABASE)"
+      envFrom:
+        - configMapRef:
+            name: common-config
+        - configMapRef:
+            name: database-config
+        - configMapRef:
+            name: airflow-config
+      resources:
+        requests:
+          cpu: "500m"
+          memory: "2Gi"
+        limits:
+          cpu: "1000m" 
+          memory: "2Gi"
